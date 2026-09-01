@@ -1,0 +1,344 @@
+const KEY="imaginaryCurrencyApp_v1";
+const defaults={
+  title:"My Rewards", currencyName:"Stars", currencyIcon:"⭐", balance:0,
+  rewards:[
+    {id:1,name:"Movie night",price:1500},
+    {id:2,name:"Pick dinner",price:500},
+    {id:3,name:"Big reward",price:5000}
+  ], history:[]
+};
+let state=load(), editingRewardId=null, amountMode="add";
+
+function load(){
+  try{return {...defaults,...JSON.parse(localStorage.getItem(KEY))}}catch{return structuredClone(defaults)}
+}
+function save(){localStorage.setItem(KEY,JSON.stringify(state)); render()}
+function fmt(n){return new Intl.NumberFormat().format(n)}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
+function toast(msg){const t=document.getElementById("toast");t.textContent=msg;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),1800)}
+function addHistory(amount,reason,kind){
+  state.history.unshift({id:Date.now()+Math.random(),amount,reason,kind,date:new Date().toISOString()});
+}
+function render(){
+  document.getElementById("appTitle").textContent=state.title;
+  document.getElementById("balance").textContent=fmt(state.balance);
+  document.getElementById("currencyIcon").textContent=state.currencyIcon;
+  document.getElementById("currencyName").textContent=state.currencyName;
+  const list=document.getElementById("rewardsList");
+  list.innerHTML="";
+  document.getElementById("emptyRewards").classList.toggle("hidden",state.rewards.length>0);
+  [...state.rewards].sort((a,b)=>a.price-b.price).forEach(r=>{
+    const el=document.createElement("div");el.className="reward";
+    el.innerHTML=`<div class="rewardInfo"><div class="rewardName">${esc(r.name)}</div><div class="rewardPrice">${fmt(r.price)} ${esc(state.currencyIcon)} ${esc(state.currencyName)}</div></div>
+      <button class="redeem" ${state.balance<r.price?"disabled":""} data-redeem="${r.id}">Redeem</button>
+      <button class="more" data-edit="${r.id}" aria-label="Edit">⋮</button>`;
+    list.appendChild(el);
+  });
+  const h=document.getElementById("historyList");h.innerHTML="";
+  document.getElementById("emptyHistory").classList.toggle("hidden",state.history.length>0);
+  state.history.forEach(x=>{
+    const el=document.createElement("div");el.className="historyItem";
+    const positive=x.amount>0;
+    el.innerHTML=`<div class="historyIcon">${x.kind==="reward"?"🎁":positive?"＋":"−"}</div>
+      <div class="historyInfo"><div class="historyReason">${esc(x.reason||"Manual adjustment")}</div><div class="historyDate">${new Date(x.date).toLocaleString()}</div></div>
+      <div class="${positive?"plus":"minus"}">${positive?"+":""}${fmt(x.amount)} ${esc(state.currencyIcon)}</div>`;
+    h.appendChild(el);
+  });
+}
+function openAmount(mode){
+  amountMode=mode;
+  document.getElementById("amountTitle").textContent=mode==="add"?"Add currency":"Spend currency";
+  document.getElementById("amountInput").value="";
+  document.getElementById("reasonInput").value="";
+  document.getElementById("amountDialog").showModal();
+}
+document.getElementById("addBtn").onclick=()=>openAmount("add");
+document.getElementById("subtractBtn").onclick=()=>openAmount("subtract");
+document.getElementById("amountForm").onsubmit=e=>{
+  e.preventDefault();
+  const n=Math.floor(Number(document.getElementById("amountInput").value));
+  const reason=document.getElementById("reasonInput").value.trim();
+  if(!Number.isFinite(n)||n<1)return;
+  if(amountMode==="subtract"&&n>state.balance){toast("Not enough currency");return}
+  const delta=amountMode==="add"?n:-n;
+  state.balance+=delta; addHistory(delta,reason, "manual"); save();
+  document.getElementById("amountDialog").close();toast(delta>0?`+${fmt(n)} ${state.currencyIcon}`:`-${fmt(n)} ${state.currencyIcon}`);
+};
+document.getElementById("newRewardBtn").onclick=()=>openReward();
+function openReward(id=null){
+  editingRewardId=id;
+  const r=state.rewards.find(x=>x.id===id);
+  document.getElementById("rewardTitle").textContent=r?"Edit reward":"New reward";
+  document.getElementById("rewardName").value=r?.name||"";
+  document.getElementById("rewardPrice").value=r?.price||"";
+  document.getElementById("rewardDialog").showModal();
+}
+document.getElementById("rewardForm").onsubmit=e=>{
+  e.preventDefault();
+  const name=document.getElementById("rewardName").value.trim();
+  const price=Math.floor(Number(document.getElementById("rewardPrice").value));
+  if(!name||!Number.isFinite(price)||price<1)return;
+  if(editingRewardId){
+    const r=state.rewards.find(x=>x.id===editingRewardId);r.name=name;r.price=price;
+  }else state.rewards.push({id:Date.now(),name,price});
+  save();document.getElementById("rewardDialog").close();toast("Reward saved");
+};
+document.getElementById("rewardsList").onclick=e=>{
+  const redeem=e.target.closest("[data-redeem]"), edit=e.target.closest("[data-edit]");
+  if(redeem){
+    const r=state.rewards.find(x=>x.id==redeem.dataset.redeem);
+    if(!r||state.balance<r.price)return;
+    if(!confirm(`Redeem "${r.name}" for ${fmt(r.price)} ${state.currencyIcon}?`))return;
+    state.balance-=r.price;addHistory(-r.price,`Redeemed: ${r.name}`,"reward");save();toast("Reward redeemed 🎉");
+  }
+  if(edit){
+    const r=state.rewards.find(x=>x.id==edit.dataset.edit);
+    if(!r)return;
+    const action=prompt(`Edit "${r.name}"\n\nType DELETE to remove it, or press Cancel to edit.`, "");
+    if(action==="DELETE"){state.rewards=state.rewards.filter(x=>x.id!==r.id);save();toast("Reward deleted")}
+    else openReward(r.id);
+  }
+};
+document.querySelectorAll(".tab").forEach(btn=>btn.onclick=()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));btn.classList.add("active");
+  document.getElementById("rewardsTab").classList.toggle("hidden",btn.dataset.tab!=="rewards");
+  document.getElementById("historyTab").classList.toggle("hidden",btn.dataset.tab!=="history");
+});
+document.getElementById("settingsBtn").onclick=()=>{
+  settingTitle.value=state.title;settingCurrencyName.value=state.currencyName;settingCurrencyIcon.value=state.currencyIcon;
+  settingsDialog.showModal();
+};
+document.getElementById("settingsForm").onsubmit=e=>{
+  e.preventDefault();
+  state.title=settingTitle.value.trim()||"My Rewards";
+  state.currencyName=settingCurrencyName.value.trim()||"Stars";
+  state.currencyIcon=settingCurrencyIcon.value.trim()||"⭐";
+  save();settingsDialog.close();toast("Settings saved");
+};
+document.getElementById("clearHistoryBtn").onclick=()=>{
+  if(confirm("Clear the entire history?")){state.history=[];save();toast("History cleared")}
+};
+document.getElementById("resetBtn").onclick=()=>{
+  if(confirm("Reset the app, including balance, rewards, and history?")){
+    state=structuredClone(defaults);save();settingsDialog.close();toast("App reset");
+  }
+};
+document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>document.getElementById(b.dataset.close).close());
+if("serviceWorker" in navigator) window.addEventListener("load",()=>navigator.serviceWorker.register("sw.js").catch(()=>{}));
+render();
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="110" fill="#111827"/>
+<circle cx="256" cy="256" r="150" fill="#7c5cff"/>
+<path d="M256 145l35 72 80 12-58 56 14 79-71-38-71 38 14-79-58-56 80-12z" fill="white"/>
+</svg>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#111827">
+  <meta name="description" content="A simple custom currency and rewards tracker.">
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+  <title>My Rewards</title>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <div class="eyebrow">CUSTOM REWARD WALLET</div>
+        <h1 id="appTitle">My Rewards</h1>
+      </div>
+      <button class="iconBtn" id="settingsBtn" aria-label="Settings">⚙️</button>
+    </header>
+
+    <main>
+      <section class="balanceCard">
+        <div class="balanceLabel">CURRENT BALANCE</div>
+        <div class="balance"><span id="balance">0</span> <span id="currencyIcon">⭐</span></div>
+        <div class="balanceName" id="currencyName">Stars</div>
+        <div class="quickActions">
+          <button class="primary" id="addBtn">＋ Add</button>
+          <button class="secondary" id="subtractBtn">− Spend</button>
+        </div>
+      </section>
+
+      <nav class="tabs">
+        <button class="tab active" data-tab="rewards">Rewards</button>
+        <button class="tab" data-tab="history">History</button>
+      </nav>
+
+      <section id="rewardsTab" class="tabPanel">
+        <div class="sectionHead">
+          <div>
+            <h2>Reward Shop</h2>
+            <p>Set your own prices and redeem when you have enough.</p>
+          </div>
+          <button class="smallPrimary" id="newRewardBtn">＋ Reward</button>
+        </div>
+        <div id="rewardsList" class="cards"></div>
+        <div id="emptyRewards" class="empty hidden">No rewards yet. Add one and give it a price.</div>
+      </section>
+
+      <section id="historyTab" class="tabPanel hidden">
+        <div class="sectionHead">
+          <div>
+            <h2>History</h2>
+            <p>Every addition, spend, and redemption is recorded here.</p>
+          </div>
+          <button class="smallDanger" id="clearHistoryBtn">Clear</button>
+        </div>
+        <div id="historyList" class="history"></div>
+        <div id="emptyHistory" class="empty hidden">Nothing has happened yet.</div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="amountDialog">
+    <form method="dialog" id="amountForm" class="dialogCard">
+      <h2 id="amountTitle">Add currency</h2>
+      <label>Amount<input id="amountInput" type="number" min="1" step="1" required autofocus></label>
+      <label>Reason <span class="optional">(optional)</span><input id="reasonInput" maxlength="80" placeholder="e.g. Finished homework"></label>
+      <div class="dialogActions">
+        <button type="button" class="secondary" data-close="amountDialog">Cancel</button>
+        <button class="primary" value="default">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="rewardDialog">
+    <form method="dialog" id="rewardForm" class="dialogCard">
+      <h2 id="rewardTitle">New reward</h2>
+      <label>Reward name<input id="rewardName" maxlength="60" placeholder="e.g. Movie night" required></label>
+      <label>Price<input id="rewardPrice" type="number" min="1" step="1" placeholder="1000" required></label>
+      <div class="dialogActions">
+        <button type="button" class="secondary" data-close="rewardDialog">Cancel</button>
+        <button class="primary" value="default">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="settingsDialog">
+    <form method="dialog" id="settingsForm" class="dialogCard">
+      <h2>Settings</h2>
+      <label>App name<input id="settingTitle" maxlength="30"></label>
+      <label>Currency name<input id="settingCurrencyName" maxlength="20"></label>
+      <label>Currency icon<input id="settingCurrencyIcon" maxlength="4"></label>
+      <div class="dialogActions">
+        <button type="button" class="secondary" data-close="settingsDialog">Cancel</button>
+        <button class="primary" value="default">Save</button>
+      </div>
+      <hr>
+      <button type="button" class="dangerWide" id="resetBtn">Reset everything</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
+{
+  "name": "My Rewards",
+  "short_name": "Rewards",
+  "description": "A simple custom currency and reward tracker.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0b1020",
+  "theme_color": "#111827",
+  "icons": [
+    {"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
+# My Rewards — Custom Currency Tracker
+
+A small, installable web app for tracking an imaginary/custom currency and redeeming custom rewards.
+
+## Features
+- Custom currency name and icon
+- Add or subtract currency manually
+- Optional reason for each transaction
+- Custom rewards with custom prices
+- Redeem rewards only when the balance is high enough
+- Edit/delete rewards
+- Full transaction history
+- Data persists in the browser with localStorage
+- Offline-capable PWA
+
+## Run it
+Because service workers/PWA installation require a secure origin (or localhost), run a local web server rather than opening `index.html` directly.
+
+If Python is installed:
+    python3 -m http.server 8000
+
+Then open:
+    http://localhost:8000
+
+For a permanently installable version, upload this folder to a static HTTPS host such as GitHub Pages or another web host.
+
+The app stores its data locally in the browser. Clearing that site's browser storage will erase the saved data.
+
+:root{
+  --bg:#0b1020; --panel:#111827; --panel2:#182235; --line:#263247;
+  --text:#f7f8fb; --muted:#9aa7bb; --accent:#7c5cff; --green:#27c27a;
+  --red:#ff5d6c; --shadow:0 18px 50px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(circle at 50% -10%,#202d4a 0,#0b1020 45%);color:var(--text);font:15px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;min-height:100vh}
+button,input{font:inherit}
+button{border:0;cursor:pointer}
+.app{width:min(760px,100%);margin:auto;padding:22px 18px 50px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px}
+.eyebrow{font-size:11px;letter-spacing:.14em;color:var(--muted);font-weight:800}
+h1{margin:2px 0 0;font-size:28px;letter-spacing:-.03em}
+h2{margin:0;font-size:19px}
+p{margin:4px 0 0;color:var(--muted);font-size:13px}
+.iconBtn{width:42px;height:42px;border-radius:13px;background:var(--panel);color:white;font-size:18px;border:1px solid var(--line)}
+.balanceCard{background:linear-gradient(145deg,#1a2540,#111827);border:1px solid var(--line);border-radius:24px;padding:26px;box-shadow:var(--shadow)}
+.balanceLabel{font-size:11px;font-weight:800;color:var(--muted);letter-spacing:.12em}
+.balance{font-size:48px;font-weight:850;letter-spacing:-.05em;margin-top:5px;word-break:break-word}
+.balanceName{color:var(--muted);margin-top:-3px}
+.quickActions{display:flex;gap:10px;margin-top:22px}
+.primary,.secondary,.smallPrimary,.smallDanger,.dangerWide{border-radius:12px;padding:11px 16px;font-weight:750}
+.primary{background:var(--accent);color:white}
+.secondary{background:#263247;color:white}
+.quickActions button{flex:1}
+.smallPrimary{background:var(--accent);color:white;padding:9px 13px}
+.smallDanger{background:#3a2027;color:#ff9da6;padding:9px 13px}
+.dangerWide{background:#3a2027;color:#ff9da6;width:100%}
+.tabs{display:flex;gap:4px;background:#0d1424;border:1px solid var(--line);padding:4px;border-radius:14px;margin:22px 0 18px}
+.tab{flex:1;padding:10px;border-radius:10px;background:transparent;color:var(--muted);font-weight:750}
+.tab.active{background:var(--panel2);color:white}
+.sectionHead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:13px}
+.cards{display:grid;gap:10px}
+.reward{display:flex;align-items:center;gap:14px;background:var(--panel);border:1px solid var(--line);border-radius:17px;padding:15px}
+.rewardInfo{flex:1;min-width:0}.rewardName{font-weight:750;font-size:16px;overflow:hidden;text-overflow:ellipsis}
+.rewardPrice{color:#c5cce0;font-size:13px;margin-top:2px}
+.redeem{background:#233d35;color:#7ce0ae;padding:9px 12px;border-radius:10px;font-weight:800}
+.redeem:disabled{background:#222b38;color:#68758a;cursor:not-allowed}
+.more{background:transparent;color:var(--muted);font-size:19px;padding:7px}
+.empty{text-align:center;padding:36px 15px;color:var(--muted);border:1px dashed var(--line);border-radius:16px}
+.history{display:grid;gap:8px}
+.historyItem{display:flex;align-items:center;gap:12px;background:var(--panel);border:1px solid var(--line);padding:13px;border-radius:14px}
+.historyIcon{font-size:20px}.historyInfo{flex:1}.historyReason{font-weight:650}.historyDate{font-size:11px;color:var(--muted);margin-top:2px}
+.plus{color:var(--green);font-weight:800}.minus{color:var(--red);font-weight:800}
+.hidden{display:none!important}
+dialog{border:0;padding:0;background:transparent;color:var(--text);width:min(440px,calc(100% - 28px))}
+dialog::backdrop{background:rgba(0,0,0,.68);backdrop-filter:blur(4px)}
+.dialogCard{background:#111827;border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:var(--shadow)}
+.dialogCard h2{margin-bottom:18px}
+label{display:block;color:#c5cce0;font-size:13px;font-weight:700;margin:13px 0}
+input{width:100%;margin-top:7px;background:#0b1020;border:1px solid var(--line);border-radius:11px;padding:12px;color:white;outline:none}
+input:focus{border-color:var(--accent)}
+.optional{color:var(--muted);font-weight:500}
+.dialogActions{display:flex;justify-content:flex-end;gap:9px;margin-top:20px}
+hr{border:0;border-top:1px solid var(--line);margin:22px 0}
+.toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,20px);opacity:0;background:#f7f8fb;color:#111827;padding:10px 15px;border-radius:12px;font-weight:750;pointer-events:none;transition:.2s;box-shadow:var(--shadow)}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+@media(max-width:500px){.app{padding:16px 13px 35px}.balance{font-size:40px}.reward{padding:13px}.reward .more{display:none}}
+
+const CACHE="my-rewards-v1";
+const ASSETS=["./","./index.html","./style.css","./app.js","./manifest.json","./icon.svg"];
+self.addEventListener("install",e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS))));
+self.addEventListener("activate",e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))));
+self.addEventListener("fetch",e=>e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request))));
